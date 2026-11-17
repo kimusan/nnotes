@@ -264,6 +264,80 @@ do
   check("picker: most recent first", pos_b ~= nil and pos_a ~= nil and pos_b < pos_a)
 end
 
+-- Task 7: link parsing, resolution, backlinks, rename rewrite
+do
+  local dir, proj = fresh_env("links")
+  require("nnotes").setup({ global_dir = dir })
+  local store = require("nnotes.store")
+  store.init(require("nnotes").config())
+  local notes = require("nnotes.notes")
+  local links = require("nnotes.links")
+
+  -- parse wiki + markdown links
+  local text = "See [[My Note]] and [doc](./other.md) here.\nAlso [x](a/b.md)\n"
+  local found = links.parse(text)
+  local kinds = {}
+  for _, l in ipairs(found) do
+    kinds[l.kind] = kinds[l.kind] or {}
+    table.insert(kinds[l.kind], l)
+  end
+  check("links: one wiki link", kinds.wiki and #kinds.wiki == 1)
+  check("links: wiki target", kinds.wiki and kinds.wiki[1].target == "My Note")
+  check("links: two markdown links", kinds.md and #kinds.md == 2)
+  check("links: md target is relative path", kinds.md and kinds.md[1].target == "./other.md")
+
+  -- resolution: wiki by title, md by relative path
+  -- (a fresh buffer named as a project file is made current so refresh()
+  --  indexes both scopes, since project scoping follows the current buffer)
+  local cur = vim.api.nvim_create_buf(true, false)
+  vim.api.nvim_buf_set_name(cur, proj .. "/links.md")
+  vim.api.nvim_set_current_buf(cur)
+  local target = notes.new_note({ scope = "global", title = "My Note" })
+  store.refresh(0)
+  local resolved = links.resolve("My Note", { kind = "wiki" }, dir)
+  check("links: wiki resolves by title", resolved == target)
+
+  local from = notes.new_note({ scope = "global", title = "From" })
+  -- a markdown link to a sibling note resolves relative to the from-dir
+  local rel = vim.fn.fnamemodify(target, ":t")
+  local r2 = links.resolve(rel, { kind = "md" }, vim.fs.dirname(from))
+  check("links: md resolves relative path", r2 == target)
+
+  -- backlinks: notes linking to a target
+  local b1 = notes.new_note({ scope = "global", title = "Back A" })
+  notes.write(b1, { title = "Back A" }, "link to [[My Note]]\n")
+  local b2 = notes.new_note({ scope = "project", title = "Back B", project_root = proj })
+  notes.write(b2, { title = "Back B" }, "link to [[My Note]]\n")
+  store.refresh(0)
+  local backs = links.backlinks(target)
+  local titles = {}
+  for _, rec in ipairs(backs) do
+    titles[rec.title] = true
+  end
+  check("backlinks: finds global backlink", titles["Back A"] == true)
+  check("backlinks: finds project backlink", titles["Back B"] == true)
+  check("backlinks: excludes self", titles["My Note"] ~= true)
+
+  -- rename rewrites references in other notes (wiki + md)
+  local r3 = notes.new_note({ scope = "global", title = "Refs" })
+  notes.write(r3, { title = "Refs" },
+    "wiki [[My Note]] and md [" .. vim.fn.fnamemodify(target, ":t") .. "](" .. vim.fn.fnamemodify(target, ":t") .. ")\n")
+  store.refresh(0)
+
+  local newpath = notes.rename(target, "Renamed Note")
+  check("rename: returns new path", newpath ~= nil and newpath ~= target)
+  check("rename: old path gone", vim.loop.fs_stat(target) == nil)
+  check("rename: new path exists", vim.loop.fs_stat(newpath) ~= nil)
+
+  local refs = table.concat(vim.fn.readfile(r3), "\n")
+  check("rename: wiki ref rewritten", refs:find("[[Renamed Note]]", 1, true) ~= nil)
+  check("rename: old wiki ref gone", refs:find("[[My Note]]", 1, true) == nil)
+  check("rename: md ref rewritten to new file",
+    refs:find(vim.fn.fnamemodify(newpath, ":t"), 1, true) ~= nil)
+  check("rename: title frontmatter updated",
+    notes.read(newpath).title == "Renamed Note")
+end
+
 print(string.format("%d passed, %d failed", passed, failed))
 if failed > 0 then
   vim.cmd("cquit")

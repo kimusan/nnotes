@@ -65,7 +65,7 @@ M.new_note = function(opts)
   end
 
   M.write(path, meta, opts.body or "")
-  store.refresh(0)
+  store.refresh()
   return path
 end
 
@@ -83,13 +83,41 @@ M.write = function(path, meta, body)
   end
   local text = store.serialize(merged, body)
   vim.fn.writefile(vim.split(text, "\n", { plain = true }), path)
-  store.refresh(0)
+  store.refresh()
   return path
 end
 
 M.read = function(path)
   local text = table.concat(vim.fn.readfile(path), "\n")
   return store.parse(text)
+end
+
+-- rename a note: new title, new filename (same dir), updated frontmatter,
+-- and all incoming references rewritten. Returns the new path.
+M.rename = function(path, new_title)
+  if not vim.loop.fs_stat(path) then
+    return nil
+  end
+  local meta, body = M.read(path)
+  local dir = vim.fs.dirname(path)
+  local date = path:match("^.-[/\\](%d%d%d%d%-%d%d%-%d%d%)") or os.date(config().filename_pattern)
+  local target = vim.fs.joinpath(dir, date .. (M.slug(new_title) ~= "" and ("-" .. M.slug(new_title)) or "") .. ".md")
+  local i = 1
+  while vim.loop.fs_stat(target) and target ~= path do
+    target = vim.fs.joinpath(dir, date .. M.slug(new_title) .. "-" .. i .. ".md")
+    i = i + 1
+  end
+
+  vim.fn.rename(path, target)
+  -- rewrite refs before write() refreshes the store, so the old title still
+  -- resolves to the old path
+  local links = require("nnotes.links")
+  links.rewrite_references(path, target, new_title)
+  local m2 = M.read(target)
+  m2.title = new_title
+  M.write(target, m2, body)
+  store.refresh()
+  return target
 end
 
 M.duplicate = function(path)
@@ -121,7 +149,7 @@ M.delete = function(path)
     i = i + 1
   end
   vim.fn.rename(path, target)
-  store.refresh(0)
+  store.refresh()
   return target
 end
 
@@ -145,7 +173,7 @@ M.move = function(path, target_scope)
     i = i + 1
   end
   vim.fn.rename(path, target)
-  store.refresh(0)
+  store.refresh()
   return target
 end
 

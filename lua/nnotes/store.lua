@@ -222,7 +222,7 @@ M.refresh = function(bufnr)
   by_tag = {}
 
   scan_dir(config.global_dir, "global", index)
-  local buf = bufnr or 0
+  local buf = bufnr or vim.api.nvim_get_current_buf()
   local root = M.find_project_root(vim.api.nvim_buf_get_name(buf))
   if root then
     scan_dir(M.project_dir(root), "project", index)
