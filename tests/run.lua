@@ -188,6 +188,82 @@ do
   check("move: new path exists", vim.loop.fs_stat(moved) ~= nil)
 end
 
+-- Task 6: picker item building + search/recent (vim.ui.select fallback)
+do
+  local dir, proj = fresh_env("picker")
+  require("nnotes").setup({ global_dir = dir })
+  local store = require("nnotes.store")
+  store.init(require("nnotes").config())
+  local notes = require("nnotes.notes")
+  local picker = require("nnotes.picker")
+
+  local a = notes.new_note({ scope = "global", title = "Alpha" })
+  local b = notes.new_note({ scope = "project", title = "Beta", project_root = proj })
+  notes.new_note({ scope = "global", title = "Gamma" })
+  vim.api.nvim_buf_set_name(0, proj .. "/main.md")
+  store.refresh(0)
+
+  -- item text shows title, scope and tags
+  local items = picker.items()
+  check("picker: three items", #items == 3)
+  local text_by_title = {}
+  for _, it in ipairs(items) do
+    text_by_title[it.text:match("^%S+") or "?"] = it
+  end
+  local alpha = nil
+  for _, it in ipairs(items) do
+    if it.text:find("Alpha", 1, true) then
+      alpha = it
+    end
+  end
+  check("picker: alpha item present with global scope",
+    alpha ~= nil and alpha.text:find("global", 1, true) ~= nil)
+  check("picker: item carries file path", alpha ~= nil and alpha.file == a)
+
+  -- search fallback lists matching notes and opening one loads the buffer
+  local shown, cb = nil, nil
+  local orig_select = vim.ui.select
+  local orig_notify = vim.notify
+  vim.notify = function()
+  end
+  vim.ui.select = function(it, _, c)
+    shown, cb = it, c
+  end
+  picker.search("alpha")
+  vim.ui.select = orig_select
+  vim.notify = orig_notify
+  check("picker: search narrows to match", type(shown) == "table" and #shown == 1)
+  if shown and #shown == 1 then
+    cb(shown[1])
+    check("picker: confirm opens the note",
+      vim.api.nvim_buf_get_name(0) == a)
+  end
+
+  -- recent: newest first by mtime (fresh buffer named as a project file so both scopes index)
+  local probe = vim.api.nvim_create_buf(true, false)
+  vim.api.nvim_buf_set_name(probe, proj .. "/probe.md")
+  local function touch(path, t)
+    vim.fn.system({ "touch", "-d", "@" .. tostring(t), path })
+  end
+  local now = math.floor(vim.loop.now() / 1000)
+  touch(a, now - 3600)
+  touch(b, now)
+  store.refresh(probe)
+  local rec = picker.recent()
+  check("picker: recent returns notes", type(rec) == "table" and #rec >= 2)
+  -- b (touched newest) must be ordered before a (touched oldest)
+  local pos_a, pos_b
+  for i, r in ipairs(rec) do
+    if r.path == a then
+      pos_a = i
+    end
+    if r.path == b then
+      pos_b = i
+    end
+  end
+  check("picker: most recent first", pos_b ~= nil and pos_a ~= nil and pos_b < pos_a)
+end
+
 print(string.format("%d passed, %d failed", passed, failed))
 if failed > 0 then
   vim.cmd("cquit")

@@ -196,6 +196,10 @@ local function scan_dir(dir, scope, acc)
     local meta, body = M.parse(text)
     local title = meta.title or vim.fn.fnamemodify(f, ":t:r")
     local st = vim.loop.fs_stat(f)
+    local mtime
+    if st and st.mtime then
+      mtime = st.mtime.sec + (st.mtime.nsec or 0) / 1e9
+    end
     local rec = {
       path = vim.fs.abspath(f),
       title = title,
@@ -205,20 +209,21 @@ local function scan_dir(dir, scope, acc)
       recurs = meta.recurs,
       status = meta.status,
       body = body,
-      mtime = st and st.mtime,
+      mtime = mtime,
     }
     table.insert(acc, rec)
   end
 end
 
-M.refresh = function(_bufnr)
+M.refresh = function(bufnr)
   index = {}
   by_path = {}
   by_title = {}
   by_tag = {}
 
   scan_dir(config.global_dir, "global", index)
-  local root = M.find_project_root(vim.api.nvim_buf_get_name(0))
+  local buf = bufnr or 0
+  local root = M.find_project_root(vim.api.nvim_buf_get_name(buf))
   if root then
     scan_dir(M.project_dir(root), "project", index)
   end
