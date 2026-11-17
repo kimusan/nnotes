@@ -1,0 +1,7 @@
+# scratch / temp
+*.tmp
+*.swp
+
+# encrypted key material, never commit
+.age-key*
+*.key
