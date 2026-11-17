@@ -138,6 +138,56 @@ do
   check("index: all_tags distinct", vim.tbl_contains(store.all_tags(), "a") and vim.tbl_contains(store.all_tags(), "b"))
 end
 
+-- Task 5: note CRUD
+do
+  local dir, proj = fresh_env("crud")
+  require("nnotes").setup({ global_dir = dir })
+  local store = require("nnotes.store")
+  store.init(require("nnotes").config())
+  local notes = require("nnotes.notes")
+
+  -- slug helper
+  check("slug: lowercases and hyphenates", notes.slug("Hello World!") == "hello-world")
+  check("slug: collapses spaces", notes.slug("a   b  c") == "a-b-c")
+
+  -- new note in global scope gets a date-prefixed filename + frontmatter
+  local p = notes.new_note({ scope = "global", title = "My First" })
+  check("new: file exists", vim.loop.fs_stat(p) ~= nil)
+  check("new: under global dir", p:find(dir, 1, true) == 1)
+  check("new: filename has date prefix", p:match("%.md$") ~= nil and p:find(os.date("%Y-%m-%d"), 1, true) ~= nil)
+
+  local m, b = store.parse(table.concat(vim.fn.readfile(p), "\n"))
+  check("new: title in frontmatter", m.title == "My First")
+  check("new: created date set", m.created == os.date("%Y-%m-%d"))
+
+  -- read/write round-trip preserves meta + body
+  notes.write(p, { title = "Renamed", tags = { "x" } }, "body line\n")
+  local m2, b2 = store.parse(table.concat(vim.fn.readfile(p), "\n"))
+  check("write: title updated", m2.title == "Renamed")
+  check("write: body preserved", b2 == "body line\n")
+  check("write: created kept", m2.created == os.date("%Y-%m-%d"))
+
+  -- duplicate creates a new file, both remain
+  local p2 = notes.duplicate(p)
+  check("dup: new distinct path", p2 ~= p)
+  check("dup: original still there", vim.loop.fs_stat(p) ~= nil)
+  check("dup: copy exists", vim.loop.fs_stat(p2) ~= nil)
+
+  -- delete moves to trash, not hard delete
+  local trash = notes.delete(p2)
+  check("delete: returns trash path", trash ~= nil and trash ~= "")
+  check("delete: file gone from dir", vim.loop.fs_stat(p2) == nil)
+  check("delete: content in trash", vim.loop.fs_stat(trash) ~= nil)
+
+  -- move a project note into global scope
+  local pp = notes.new_note({ scope = "project", title = "Proj One", project_root = proj })
+  check("move: starts in project", pp:find(proj, 1, true) == 1)
+  local moved = notes.move(pp, "global")
+  check("move: now under global dir", moved:find(dir, 1, true) == 1)
+  check("move: old project path gone", vim.loop.fs_stat(pp) == nil)
+  check("move: new path exists", vim.loop.fs_stat(moved) ~= nil)
+end
+
 print(string.format("%d passed, %d failed", passed, failed))
 if failed > 0 then
   vim.cmd("cquit")
