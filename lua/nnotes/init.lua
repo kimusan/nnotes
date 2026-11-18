@@ -91,9 +91,11 @@ local function apply_keymaps(cfg)
     { mode = "n", lhs = cfg.keys.rename, rhs = function() picker.rename() end, desc = "Nnotes: Rename note" },
     { mode = "n", lhs = cfg.keys.delete, rhs = function() picker.delete() end, desc = "Nnotes: Delete note" },
     { mode = "n", lhs = cfg.keys.move, rhs = function() picker.move() end, desc = "Nnotes: Move note" },
-    { mode = "n", lhs = cfg.keys.sync, rhs = function() sync.sync_current() end, desc = "Nnotes: Sync" },
-    { mode = "n", lhs = cfg.keys.sync_status, rhs = function() sync.status_current() end, desc = "Nnotes: Sync status" },
   }
+  if cfg.sync and cfg.sync.enabled then
+    table.insert(entries, { mode = "n", lhs = cfg.keys.sync, rhs = function() sync.sync_current() end, desc = "Nnotes: Sync" })
+    table.insert(entries, { mode = "n", lhs = cfg.keys.sync_status, rhs = function() sync.status_current() end, desc = "Nnotes: Sync status" })
+  end
   for _, e in ipairs(entries) do
     if e.lhs and e.lhs ~= "" then
       local lhs = expand_leader(e.lhs)
@@ -117,6 +119,25 @@ M.setup = function(opts)
   require("nnotes.deadlines").setup()
 
   apply_keymaps(_config)
+  if _config.sync and _config.sync.enabled then
+    vim.api.nvim_create_user_command("NnotesSyncInit", function()
+      local sync = require("nnotes.sync")
+      local scope = sync.current_scope()
+      local remote = (_config.sync.remotes or {})[scope]
+      if not remote then
+        remote = vim.fn.input("Remote URL (blank to skip): ")
+        if remote == "" then
+          remote = nil
+        end
+      end
+      local dir, err = sync.init_scope(scope, remote)
+      if not dir then
+        vim.notify("[nnotes] " .. (err or "init failed"), vim.log.ERROR)
+        return
+      end
+      vim.notify(("[nnotes] initialized %s scope at %s"):format(scope, dir), vim.log.INFO)
+    end, { desc = "Nnotes: init the current scope's git repo", force = true })
+  end
   vim.api.nvim_create_autocmd("BufReadPost", {
     group = vim.api.nvim_create_augroup("nnotes", {}),
     callback = function()

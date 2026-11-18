@@ -33,12 +33,29 @@ function M.check()
     end
   end
 
-  -- age presence: required only when encryption is enabled
+  -- age presence + a configured recipient/key, required only when encryption
+  -- is enabled
   if cfg.sync.encryption.enabled then
     if vim.fn.executable("age") == 1 then
       vim.health.ok("age binary found")
     else
       vim.health.error("age not found; install it for encrypted sync (e.g. apt install age)")
+    end
+    local enc = cfg.sync.encryption
+    if not (enc.recipient_file ~= nil or vim.env.NNOTES_AGE_RECIPIENT ~= nil) then
+      vim.health.error("encryption enabled but no recipient set (sync.encryption.recipient_file or $NNOTES_AGE_RECIPIENT)")
+    end
+    if not (enc.key_file ~= nil or vim.env.NNOTES_AGE_KEY ~= nil) then
+      vim.health.error("encryption enabled but no key set (sync.encryption.key_file or $NNOTES_AGE_KEY)")
+    end
+  end
+
+  -- sync enabled: at least the global remote should be configured to push
+  if cfg.sync.enabled then
+    if cfg.sync.remotes and cfg.sync.remotes.global then
+      vim.health.ok("sync enabled, global remote configured")
+    else
+      vim.health.warn("sync enabled but no global remote in sync.remotes (local-only until one is set)")
     end
   end
 
@@ -56,7 +73,7 @@ function M.check()
         vim.health.info(("%s: git repo (no remote)"):format(label))
       end
     else
-      vim.health.info(("%s: not yet a git repo (run init_scope)"):format(label))
+      vim.health.info(("%s: not yet a git repo (run :NnotesSyncInit)"):format(label))
     end
   end
   repo_status(store.global_dir(), "Global scope")

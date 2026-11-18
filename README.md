@@ -169,24 +169,47 @@ note. `notes.from_template(scope, name, title)` does the same programmatically.
 
 ## Sync and encryption
 
+Sync is opt-in. The `<leader>nS`/`<leader>ng` keymaps and the
+`:NnotesSyncInit` command are registered only when `sync.enabled = true`.
+
 Each scope directory is its own git working tree. `<leader>nS` stages all
-changes, auto-commits as `nnotes: YYYY-MM-DD <n> changes`, pushes, and does a
-ff-only pull. It never force-pushes. `<leader>ng` shows the remote and a short
-status.
+changes, auto-commits as `nnotes: YYYY-MM-DD <n> changes` (skipped when
+`sync.auto_commit = false`), pushes, and does a ff-only pull. It never
+force-pushes. `<leader>ng` shows the remote and a short status.
+
+Run `:NnotesSyncInit` once per scope to create the repo, add the remote, wire
+the age filters, and make the initial commit. It uses `sync.remotes.<scope>`
+when that is set, and prompts for a URL otherwise.
 
 To enable client-side encryption with [age](https://age-encryption.org), set
-`sync.encryption.enabled = true` and export:
+`sync.encryption.enabled = true` and supply a recipient and key. Either export
+environment variables:
 
 ```sh
-export NNOTES_AGE_RECIPIENT="age1...."   # recipient public key
-export NNOTES_AGE_KEY=/path/to/identity  # key file path (age -d -i)
+export NNOTES_AGE_RECIPIENT="age1...."   # a recipient public key
+export NNOTES_AGE_KEY=/path/to/identity  # an identity file path (age -d -i)
 ```
 
-nnotes then adds a git clean/smudge filter and a `.gitattributes` line
+or point the options at files, which nnotes inlines into the git filter (useful
+where git's filter subprocess does not inherit the environment):
+
+```lua
+require("nnotes").setup({
+  sync = {
+    encryption = {
+      enabled = true,
+      recipient_file = "~/.age/recipients",  -- a recipients file (age -R)
+      key_file = "~/.age/keys.txt",          -- an identity file (age -i)
+    },
+  },
+})
+```
+
+nnotes adds a git clean/smudge filter and a `.gitattributes` line
 (`*.md filter=agecrypt`) so note files are stored as age ciphertext and
 decrypted on checkout. If the `age` binary is missing, sync degrades to a
-notice and proceeds unencrypted. Run `require("nnotes.sync").init_scope(scope,
-remote_url)` to set up a scope's repo, remote, and filters on first use.
+notice and proceeds unencrypted. `:checkhealth nnotes` reports when encryption
+is enabled but the binary, recipient, or key is absent.
 
 ## Healthcheck
 

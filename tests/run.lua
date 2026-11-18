@@ -771,7 +771,7 @@ end
 -- Task 12: github sync (temp git repos) + age filter setup
 do
   local dir, proj = fresh_env("sync")
-  require("nnotes").setup({ global_dir = dir })
+  require("nnotes").setup({ global_dir = dir, sync = { enabled = true } })
   local store = require("nnotes.store")
   store.init(require("nnotes").config())
   local sync = require("nnotes.sync")
@@ -865,6 +865,57 @@ do
     end
   end
 
+  -- file-based round-trip: recipient_file/key_file inlined into the filter
+  -- (age -R <recipients file>) without relying on the NNOTES_AGE_* env vars
+  if sync.age_available() and vim.fn.executable("age-keygen") == 1 then
+    local tmp2 = vim.fn.tempname() .. "/agerepo2"
+    vim.fn.mkdir(tmp2, "p")
+    vim.fn.system({ "git", "-C", tmp2, "init", "-b", "main" })
+    vim.fn.system({ "git", "-C", tmp2, "config", "user.name", "t" })
+    vim.fn.system({ "git", "-C", tmp2, "config", "user.email", "t@t" })
+    local keyfile2 = tmp2 .. "/identity.txt"
+    vim.fn.system({ "age-keygen", "-o", keyfile2 })
+    if vim.v.shell_error == 0 and vim.loop.fs_stat(keyfile2) then
+      local recipients_file = tmp2 .. "/recipients.txt"
+      local pub
+      for _, l in ipairs(vim.fn.readfile(keyfile2)) do
+        local pk = l:match("# public key: (%S+)")
+        if pk then
+          pub = pk
+          break
+        end
+      end
+      if pub then
+        vim.fn.writefile({ pub }, recipients_file)
+        -- make sure the env vars are NOT set, so the filter must use the files
+        vim.env.NNOTES_AGE_KEY = nil
+        vim.env.NNOTES_AGE_RECIPIENT = nil
+        require("nnotes").setup({
+          global_dir = dir,
+          sync = {
+            enabled = true,
+            encryption = { enabled = true, recipient_file = recipients_file, key_file = keyfile2 },
+          },
+        })
+        sync.setup_age_filters(tmp2)
+        local clean = vim.fn.system({ "git", "-C", tmp2, "config", "filter.agecrypt.clean" })
+        check("sync: clean filter uses recipients file", clean:find("-R", 1, true) ~= nil and clean:find(recipients_file, 1, true) ~= nil)
+        vim.fn.writefile({ "file mode secret" }, tmp2 .. "/secret.md")
+        vim.fn.system({ "git", "-C", tmp2, "add", "secret.md" })
+        vim.fn.system({ "git", "-C", tmp2, "commit", "-m", "enc" })
+        local stored = vim.fn.system({ "git", "-C", tmp2, "cat-file", "-p", "HEAD:secret.md" })
+        check("sync: file-mode clean encrypts stored blob",
+          stored:find("age-encryption.org", 1, true) ~= nil and stored:find("file mode secret", 1, true) == nil)
+        vim.fn.delete(tmp2 .. "/secret.md")
+        vim.fn.system({ "git", "-C", tmp2, "checkout", "--", "secret.md" })
+        local back = table.concat(vim.fn.readfile(tmp2 .. "/secret.md"), "\n")
+        check("sync: file-mode smudge decrypts on checkout", back:find("file mode secret", 1, true) ~= nil)
+        -- restore the enabled, auto-committing config for later blocks
+        require("nnotes").setup({ global_dir = dir, sync = { enabled = true } })
+      end
+    end
+  end
+
   -- the sync keymaps are registered
   local kmaps = vim.api.nvim_get_keymap("n")
   local have_sync, have_status = false, false
@@ -878,6 +929,36 @@ do
   end
   check("sync: sync keymap registered", have_sync)
   check("sync: sync_status keymap registered", have_status)
+
+  -- :NnotesSyncInit command exists when sync is enabled
+  local cmds = vim.api.nvim_get_commands({})
+  check("sync: :NnotesSyncInit command exists", cmds.NnotesSyncInit ~= nil)
+
+  -- auto_commit=false stages changes but does not create a commit
+  vim.fn.writefile({ "# Five" }, dir .. "/2026-11-18-e.md")
+  local before = vim.fn.system({ "git", "-C", dir, "rev-parse", "HEAD" })
+  local saved_auto = require("nnotes").config().sync.auto_commit
+  require("nnotes").setup({ global_dir = dir, sync = { enabled = true, auto_commit = false } })
+  local n_noop = sync.commit_changes(dir)
+  local after = vim.fn.system({ "git", "-C", dir, "rev-parse", "HEAD" })
+  check("sync: auto_commit=false makes no commit", n_noop == 0 and before == after)
+  require("nnotes").setup({ global_dir = dir, sync = { enabled = true, auto_commit = saved_auto } })
+
+  -- init_scope falls back to the configured sync.remotes[scope] when no url
+  -- argument is passed (tested on the global scope: no project-root needed)
+  local bare2 = vim.fn.tempname() .. "/remote2.git"
+  vim.fn.system({ "git", "init", "--bare", "-b", "main", bare2 })
+  -- use a throwaway global dir so the configured remote lands on a fresh repo
+  local gdir2 = vim.fn.tempname() .. "/g2"
+  vim.fn.mkdir(gdir2, "p")
+  require("nnotes").setup({ global_dir = gdir2, sync = { enabled = true, remotes = { global = bare2 } } })
+  sync.init_scope("global")
+  local g2_remote = vim.fn.system({ "git", "-C", gdir2, "remote", "get-url", "origin" })
+  check("sync: init_scope uses configured global remote",
+    g2_remote:find(bare2, 1, true) ~= nil)
+
+  -- restore the enabled, auto-committing config for any later blocks
+  require("nnotes").setup({ global_dir = dir, sync = { enabled = true } })
 end
 
 -- Task 13: command flows (link ops, note commands) + full keymap set
@@ -1023,26 +1104,33 @@ do
   check("commands: move moved to global",
     vim.loop.fs_stat(mv) == nil and mover ~= nil and mover.scope == "global")
 
-  -- all 16 global keymaps are registered
+  -- the 14 non-sync keymaps are registered; the 2 sync keymaps are gated
+  -- behind sync.enabled (false by default) and must be absent here
   local want = {
     "Nnotes: New note", "Nnotes: Today's note", "Nnotes: New note from template",
     "Nnotes: Search notes", "Nnotes: Recent notes", "Nnotes: Tags",
     "Nnotes: Backlinks", "Nnotes: Follow link", "Nnotes: Make link",
     "Nnotes: Upcoming deadlines", "Nnotes: Toggle sidebar",
     "Nnotes: Rename note", "Nnotes: Delete note", "Nnotes: Move note",
-    "Nnotes: Sync", "Nnotes: Sync status",
   }
+  local absent = { "Nnotes: Sync", "Nnotes: Sync status" }
   local have = {}
   for _, m in ipairs(vim.api.nvim_get_keymap("n")) do
     have[m.desc] = true
   end
-  local all = true
+  local all, none = true, true
   for _, d in ipairs(want) do
     if not have[d] then
       all = false
     end
   end
-  check("commands: all global keymaps registered", all)
+  for _, d in ipairs(absent) do
+    if have[d] then
+      none = false
+    end
+  end
+  check("commands: non-sync keymaps registered", all)
+  check("commands: sync keymaps absent when sync disabled", none)
 end
 
 -- Task 14: public API surface

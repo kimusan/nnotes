@@ -50,9 +50,21 @@ M.setup_age_filters = function(dir)
       .. "Syncing without encryption.", vim.log.WARN)
     return false
   end
+  local enc = (config().sync or {}).encryption or {}
+  -- Inline absolute paths when the file options are set: git's filter
+  -- subprocess may not inherit the NNOTES_AGE_* environment variables.
+  -- recipient_file is a recipients file (age -R); key_file is an identity
+  -- file (age -i).
+  local recipient_flag
+  if enc.recipient_file then
+    recipient_flag = '-R "' .. vim.fn.expand(enc.recipient_file, ":p") .. '"'
+  else
+    recipient_flag = '-r "$NNOTES_AGE_RECIPIENT"'
+  end
+  local key_path = enc.key_file and vim.fn.expand(enc.key_file, ":p") or "$NNOTES_AGE_KEY"
   vim.fn.writefile({ "*.md filter=agecrypt" }, dir .. "/.gitattributes")
-  git(dir, "config", "filter.agecrypt.clean", 'age -r "$NNOTES_AGE_RECIPIENT" -o -')
-  git(dir, "config", "filter.agecrypt.smudge", 'age -d -i "$NNOTES_AGE_KEY" -o -')
+  git(dir, "config", "filter.agecrypt.clean", 'age ' .. recipient_flag .. ' -o -')
+  git(dir, "config", "filter.agecrypt.smudge", 'age -d -i "' .. key_path .. '" -o -')
   return true
 end
 
@@ -74,6 +86,9 @@ M.init_scope = function(scope, remote_url)
   if not is_repo(dir) then
     git(dir, "init", "-b", "main")
     ensure_identity(dir)
+  end
+  if not remote_url then
+    remote_url = ((config().sync or {}).remotes or {})[scope]
   end
   if remote_url then
     local _, rc = git(dir, "remote", "get-url", "origin")
@@ -102,6 +117,9 @@ M.commit_changes = function(dir)
     n = n + 1
   end
   if n == 0 then
+    return 0
+  end
+  if not (config().sync or {}).auto_commit then
     return 0
   end
   git(dir, "commit", "-m", ("nnotes: %s %d changes"):format(os.date("%Y-%m-%d"), n))
