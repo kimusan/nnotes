@@ -140,4 +140,40 @@ M.word_count = function()
   return require("nnotes.formatting").word_count()
 end
 
+------------------------------
+-- Public API (thin dispatch over the modules)
+------------------------------
+
+M.new = function(scope, title)
+  return require("nnotes.notes").new_note({ scope = scope or "global", title = title or "Untitled" })
+end
+
+M.open = function(path)
+  if not path or not vim.loop.fs_stat(path) then
+    return nil
+  end
+  vim.cmd("edit " .. vim.fn.fnameescape(path))
+  return path
+end
+
+M.rename = function(path, new_title)
+  return require("nnotes.notes").rename(path, new_title)
+end
+
+M.delete = function(path)
+  return require("nnotes.notes").delete(path)
+end
+
+M.search = function(query)
+  return require("nnotes.store").search(query or "")
+end
+
+M.deadlines = function()
+  return require("nnotes.deadlines").deadlines()
+end
+
+M.refresh = function(bufnr)
+  require("nnotes.store").refresh(bufnr)
+end
+
 return M

@@ -1045,6 +1045,34 @@ do
   check("commands: all global keymaps registered", all)
 end
 
+-- Task 14: public API surface
+do
+  local dir, proj = fresh_env("api")
+  local nnotes = require("nnotes")
+  nnotes.setup({ global_dir = dir })
+
+  local p = nnotes.new("global", "API Note")
+  check("api: new creates a note", p ~= nil and vim.loop.fs_stat(p) ~= nil)
+  check("api: new sets title", nnotes.search("API Note")[1] ~= nil)
+
+  check("api: open returns path", nnotes.open(p) == p)
+  check("api: open missing returns nil", nnotes.open("/nope/none.md") == nil)
+
+  local newp = nnotes.rename(p, "API Renamed")
+  check("api: rename works", newp ~= nil and vim.loop.fs_stat(newp) ~= nil)
+
+  check("api: search finds by body",
+    #nnotes.search("api") >= 1)
+  check("api: deadlines returns a list", type(nnotes.deadlines()) == "table")
+
+  local d = nnotes.delete(newp)
+  check("api: delete moves to trash", d ~= nil and vim.loop.fs_stat(newp) == nil)
+
+  nnotes.refresh()
+  check("api: refresh does not error", true)
+  check("api: word_count is a number", type(nnotes.word_count()) == "number")
+end
+
 print(string.format("%d passed, %d failed", passed, failed))
 if failed > 0 then
   vim.cmd("cquit")
