@@ -577,6 +577,145 @@ do
   check("templates: new_template keymap registered", bound)
 end
 
+-- Task 10: deadlines and notifications
+do
+  local dir, proj = fresh_env("deadlines")
+  local nnotes = require("nnotes")
+  nnotes.setup({ global_dir = dir })
+  local store = require("nnotes.store")
+  store.init(nnotes.config())
+  local notes = require("nnotes.notes")
+  local dl = require("nnotes.deadlines")
+
+  -- date helpers
+  check("deadlines: parse_date valid",
+    vim.deep_equal(dl.parse_date("2026-11-18"), { year = 2026, month = 11, day = 18 }))
+  check("deadlines: parse_date invalid", dl.parse_date("Nov 18") == nil)
+  local today = dl.today()
+  check("deadlines: days_between zero same day", dl.days_between(today, today) == 0)
+  check("deadlines: days_between +1", dl.days_between(today, dl.add_days(today, 1)) == 1)
+  check("deadlines: days_between -1", dl.days_between(today, dl.add_days(today, -1)) == -1)
+  check("deadlines: month boundary",
+    dl.days_between({ year = 2026, month = 11, day = 30 }, { year = 2026, month = 12, day = 1 }) == 1)
+  check("deadlines: add_days month rollover",
+    vim.deep_equal(dl.add_days({ year = 2026, month = 11, day = 30 }, 1), { year = 2026, month = 12, day = 1 }))
+  check("deadlines: add_months clamps end of month",
+    vim.deep_equal(dl.add_months({ year = 2026, month = 1, day = 31 }, 1), { year = 2026, month = 2, day = 28 }))
+  check("deadlines: add_months year rollover",
+    vim.deep_equal(dl.add_months({ year = 2026, month = 12, day = 18 }, 1), { year = 2027, month = 1, day = 18 }))
+  check("deadlines: parse_duration 1d", dl.parse_duration("1d") == 1)
+  check("deadlines: parse_duration 2w", dl.parse_duration("2w") == 14)
+  check("deadlines: parse_duration bad unit", dl.parse_duration("2x") == nil)
+
+  -- recurring roll-forward math
+  check("deadlines: next daily", dl.next_deadline("2026-11-18", "daily") == "2026-11-19")
+  check("deadlines: next weekly", dl.next_deadline("2026-11-18", "weekly") == "2026-11-25")
+  check("deadlines: next monthly", dl.next_deadline("2026-11-18", "monthly") == "2026-12-18")
+  check("deadlines: next none", dl.next_deadline("2026-11-18", "none") == nil)
+
+  -- quiet hours (overnight window 22:00-07:00)
+  check("deadlines: quiet at 23:00", dl.in_quiet_hours({ hour = 23, min = 0 }, { "22:00", "07:00" }) == true)
+  check("deadlines: quiet at 03:00", dl.in_quiet_hours({ hour = 3, min = 0 }, { "22:00", "07:00" }) == true)
+  check("deadlines: not quiet at 12:00", dl.in_quiet_hours({ hour = 12, min = 0 }, { "22:00", "07:00" }) == false)
+  check("deadlines: quiet start exclusive of stop",
+    dl.in_quiet_hours({ hour = 7, min = 0 }, { "22:00", "07:00" }) == false)
+
+  -- due status: overdue / due / soon / future / done / no deadline
+  local overdue = dl.due_status({ title = "t", deadline = "2026-11-15", status = "active" },
+    { year = 2026, month = 11, day = 18 }, 1)
+  check("deadlines: overdue status", overdue == "overdue")
+  local due = dl.due_status({ title = "t", deadline = "2026-11-18", status = "active" },
+    { year = 2026, month = 11, day = 18 }, 1)
+  check("deadlines: due today status", due == "due")
+  local soon = dl.due_status({ title = "t", deadline = "2026-11-20", status = "active" },
+    { year = 2026, month = 11, day = 18 }, 3)
+  check("deadlines: soon within lead time", soon == "soon")
+  check("deadlines: future beyond lead",
+    dl.due_status({ title = "t", deadline = "2026-12-01", status = "active" },
+      { year = 2026, month = 11, day = 18 }, 1) == nil)
+  check("deadlines: done notes never due",
+    dl.due_status({ title = "t", deadline = "2026-11-18", status = "done" },
+      { year = 2026, month = 11, day = 18 }, 1) == nil)
+
+  -- describe builds message + level
+  local desc = dl.describe({ title = "Task", deadline = "2026-11-15", status = "active" },
+    { year = 2026, month = 11, day = 18 }, 1)
+  check("deadlines: describe overdue message", desc ~= nil and desc.message == "Task 3d overdue")
+  check("deadlines: describe overdue level", desc ~= nil and desc.level == "error")
+  local desc2 = dl.describe({ title = "Task", deadline = "2026-11-20", status = "active" },
+    { year = 2026, month = 11, day = 18 }, 3)
+  check("deadlines: describe soon is info", desc2 ~= nil and desc2.level == "info")
+
+  -- roll_forward: a done recurring note advances and reactivates
+  local rp = notes.new_note({ scope = "global", title = "Recurring", deadline = "2026-11-18", recurs = "weekly" })
+  local rm, rb = notes.read(rp)
+  rm.status = "done"
+  notes.write(rp, rm, rb)
+  local next = dl.roll_forward(rp)
+  check("deadlines: roll_forward advances weekly", next == "2026-11-25")
+  local rm2 = notes.read(rp)
+  check("deadlines: roll_forward sets deadline", rm2.deadline == "2026-11-25")
+  check("deadlines: roll_forward reactivates", rm2.status == "active")
+  -- active notes and non-recurring done notes do not roll
+  check("deadlines: no roll for active", dl.roll_forward(rp) == nil)
+  local np = notes.new_note({ scope = "global", title = "OneShot", deadline = "2026-11-18" })
+  local nm, nb = notes.read(np)
+  nm.status = "done"
+  notes.write(np, nm, nb)
+  check("deadlines: no roll without recurs", dl.roll_forward(np) == nil)
+
+  -- picker items: all deadline notes, soonest first
+  local od = dl.fmt_date(dl.add_days(today, -17))
+  local dd = dl.fmt_date(today)
+  local fu = dl.fmt_date(dl.add_days(today, 22))
+  notes.new_note({ scope = "global", title = "Overdue One", deadline = od })
+  notes.new_note({ scope = "global", title = "Due One", deadline = dd })
+  notes.new_note({ scope = "global", title = "Future One", deadline = fu })
+  local items = dl.deadlines()
+  check("deadlines: picker has deadline notes", #items >= 3)
+  local by_days = {}
+  for _, it in ipairs(items) do
+    by_days[it._days] = it
+  end
+  check("deadlines: items carry days-to-due",
+    by_days[-17] ~= nil and by_days[0] ~= nil and by_days[22] ~= nil)
+  local sorted = items[1]._days == -17
+  for i = 1, #items - 1 do
+    if items[i]._days > items[i + 1]._days then
+      sorted = false
+    end
+  end
+  check("deadlines: sorted soonest first", sorted)
+
+  -- notifications: due note notifies outside quiet hours, suppressed inside
+  local msgs = {}
+  local orig_notify = vim.notify
+  vim.notify = function(msg, level)
+    table.insert(msgs, { msg = msg, level = level })
+  end
+  local due_rec = { title = "Due Note", deadline = dd, status = "active" }
+  local noon = { year = today.year, month = today.month, day = today.day, hour = 12, min = 0 }
+  dl.notify_for(due_rec, noon)
+  check("deadlines: notifies when due", #msgs == 1 and msgs[1].level == vim.log.WARN)
+  check("deadlines: message includes note", #msgs == 1 and msgs[1].msg:find("Due Note", 1, true) ~= nil)
+  msgs = {}
+  local night = { year = today.year, month = today.month, day = today.day, hour = 23, min = 0 }
+  dl.notify_for(due_rec, night)
+  check("deadlines: quiet hours suppress", #msgs == 0)
+  vim.notify = orig_notify
+
+  -- the <leader>nd keymap is registered (leader expanded)
+  local kmaps = vim.api.nvim_get_keymap("n")
+  local bound = false
+  for _, m in ipairs(kmaps) do
+    if m.desc == "Nnotes: Upcoming deadlines" then
+      bound = true
+      break
+    end
+  end
+  check("deadlines: deadlines keymap registered", bound)
+end
+
 print(string.format("%d passed, %d failed", passed, failed))
 if failed > 0 then
   vim.cmd("cquit")

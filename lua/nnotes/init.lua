@@ -72,8 +72,10 @@ local function apply_keymaps(cfg)
   applied_leader = leader_sig()
 
   local picker = require("nnotes.picker")
+  local deadlines = require("nnotes.deadlines")
   local entries = {
     { mode = "n", lhs = cfg.keys.new_template, rhs = function() picker.new_from_template() end, desc = "Nnotes: New note from template" },
+    { mode = "n", lhs = cfg.keys.deadlines, rhs = function() deadlines.pick() end, desc = "Nnotes: Upcoming deadlines" },
   }
   for _, e in ipairs(entries) do
     if e.lhs and e.lhs ~= "" then
@@ -95,6 +97,7 @@ M.setup = function(opts)
   local store = require("nnotes.store")
   store.init(_config)
   require("nnotes.formatting").setup(_config)
+  require("nnotes.deadlines").setup()
 
   apply_keymaps(_config)
   vim.api.nvim_create_autocmd("BufReadPost", {
