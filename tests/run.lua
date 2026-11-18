@@ -94,6 +94,12 @@ do
   local m3, b3 = store.parse(plain)
   check("fm: plain body has empty meta", vim.tbl_isempty(m3))
   check("fm: plain body preserved", b3 == plain)
+
+  -- a hand-written inline tag list (tags: #linux #note) normalizes to a list,
+  -- so the index can iterate it (regression: refresh crashed on a string)
+  local m4, b4 = store.parse("---\ntitle: My First note\nstatus: idea\ntags: #linux #note\n---\nbody\n")
+  check("fm: inline #tags normalize to list", type(m4.tags) == "table" and vim.deep_equal(m4.tags, { "linux", "note" }))
+  check("fm: body preserved with inline tags", b4:match("^body"))
 end
 
 -- Task 4: index collects notes from both scopes with metadata
@@ -442,6 +448,20 @@ do
       and after[toc_idx + 3] == "  - [Second](#second)")
   check("formatting: headings preserved after toc",
     vim.tbl_contains(after, "# First") and vim.tbl_contains(after, "# Third"))
+
+  -- auto_continue: pressing <CR> at the end of a list item moves the cursor
+  -- DOWN onto the new line (regression: it used to stay on the first line).
+  -- The cursor column is clamped in normal mode, so assert on row + line count.
+  local crbuf = vim.api.nvim_create_buf(false, false)
+  vim.api.nvim_set_current_buf(crbuf)
+  vim.api.nvim_buf_set_lines(crbuf, 0, -1, false, { "- item" })
+  vim.api.nvim_win_set_cursor(0, { 1, 6 })
+  formatting.auto_continue()
+  local cr = vim.api.nvim_win_get_cursor(0)
+  local crrow = type(cr) == "table" and cr[1] or cr
+  local crlines = vim.api.nvim_buf_get_lines(crbuf, 0, -1, false)
+  check("formatting: enter moves cursor down onto new line",
+    crrow == 2 and #crlines == 2 and crlines[2]:match("^%-") ~= nil)
 
   -- keymaps are registered for the markdown buffer (fallback path)
   local maps = vim.api.nvim_buf_get_keymap(buf, "n")
