@@ -81,6 +81,27 @@ local function parse_list(v)
   return out
 end
 
+-- Note files are a system boundary: the user (or another tool) may hand-write
+-- an inline tag list like `tags: #linux #note`. The YAML-subset parser above
+-- reads that as a plain string, so normalize it to a list of tag names (no
+-- leading '#') so the index and search can iterate it.
+local function normalize_tags(v)
+  if type(v) == "table" then
+    return v
+  end
+  if type(v) ~= "string" then
+    return {}
+  end
+  local out = {}
+  for tok in (v:gsub(",", " ")):gmatch("%S+") do
+    tok = tok:gsub("^#", "")
+    if tok ~= "" then
+      table.insert(out, tok)
+    end
+  end
+  return out
+end
+
 M.parse = function(text)
   local meta = {}
   if text:sub(1, 3) ~= "---" then
@@ -142,6 +163,9 @@ M.parse = function(text)
 
   local body = table.concat(vim.list_slice(lines, end_idx + 1, #lines), "\n")
   body = body:match("\n?(.*)$") or ""
+  if meta.tags ~= nil then
+    meta.tags = normalize_tags(meta.tags)
+  end
   return meta, body
 end
 
