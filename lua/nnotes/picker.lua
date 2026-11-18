@@ -108,4 +108,31 @@ M.recents = function()
   end)
 end
 
+-- template picker: choose a template, then a title, then create the note
+-- in the scope of the current buffer (project when inside a project, else
+-- global)
+M.new_from_template = function()
+  local templates = require("nnotes.templates")
+  local names = templates.list()
+  if #names == 0 then
+    vim.notify("No templates found", vim.log.WARN)
+    return
+  end
+  local scope = store.find_project_root(vim.api.nvim_buf_get_name(0)) and "project" or "global"
+  M.open("New note from template", { { text = table.concat(names, "\n"), file = "" } }, function()
+    vim.ui.select(names, { prompt = "Template: " }, function(name)
+      if not name then
+        return
+      end
+      vim.ui.input({ prompt = "Title: " }, function(title)
+        local notes = require("nnotes.notes")
+        local path = notes.from_template(scope, name, title)
+        if path then
+          open_note(path)
+        end
+      end)
+    end)
+  end)
+end
+
 return M

@@ -455,6 +455,128 @@ do
   check("formatting: buffer-local keymap registered", found)
 end
 
+-- Task 9: templates (render, list/load, from_template, picker, keymap)
+do
+  local dir, proj = fresh_env("templates")
+  local nnotes = require("nnotes")
+  nnotes.setup({ global_dir = dir })
+  local store = require("nnotes.store")
+  store.init(nnotes.config())
+  local notes = require("nnotes.notes")
+  local templates = require("nnotes.templates")
+  local picker = require("nnotes.picker")
+
+  -- render substitutes known vars and blanks unknown ones
+  local rendered = templates.render("# {{title}}\n\ndated {{date}}\n{{unknown}}", { title = "Hello" })
+  check("templates: render title", rendered:find("# Hello", 1, true) ~= nil)
+  check("templates: render date", rendered:find("dated " .. os.date("%Y-%m-%d"), 1, true) ~= nil)
+  check("templates: render unknown is empty", rendered:find("{{", 1, true) == nil)
+
+  -- list includes the five bundled templates
+  local names = templates.list()
+  for _, n in ipairs({ "daily", "weekly", "project", "meeting", "scratch" }) do
+    check("templates: bundled " .. n .. " listed", vim.tbl_contains(names, n))
+  end
+
+  -- load returns bundled text; templates_dir overrides by name
+  local custom_dir = vim.fn.tempname() .. "/tmpl"
+  vim.fn.mkdir(custom_dir, "p")
+  vim.fn.writefile({ "# {{title}}", "", "custom daily body" }, custom_dir .. "/daily.md")
+  nnotes.setup({ global_dir = dir, templates_dir = custom_dir })
+  check("templates: load bundled", (templates.load("weekly") or ""):find("Week of", 1, true) ~= nil)
+  check("templates: templates_dir wins over bundled",
+    (templates.load("daily") or ""):find("custom daily body", 1, true) ~= nil)
+
+  -- inline strings in opts.templates win over files
+  nnotes.setup({
+    global_dir = dir,
+    templates = { inline = "# {{title}}\n\ninline {{scope}}" },
+  })
+  check("templates: inline listed", vim.tbl_contains(templates.list(), "inline"))
+  check("templates: inline loaded",
+    (templates.load("inline") or ""):find("inline", 1, true) ~= nil)
+
+  -- from_template creates a note with rendered content and single frontmatter
+  nnotes.setup({ global_dir = dir })
+  local p = notes.from_template("global", "daily", "My Note")
+  check("templates: note created", p ~= nil and vim.loop.fs_stat(p) ~= nil)
+  local text = table.concat(vim.fn.readfile(p), "\n")
+  local fm = 0
+  for _, l in ipairs(vim.fn.readfile(p)) do
+    if l:match("^%s*---%s*$") then
+      fm = fm + 1
+    end
+  end
+  check("templates: frontmatter not duplicated", fm == 2)
+  check("templates: title in frontmatter",
+    notes.read(p).title == "My Note")
+  check("templates: body rendered",
+    text:find("# " .. os.date("%Y-%m-%d"), 1, true) ~= nil)
+  check("templates: no unrendered vars", text:find("{{", 1, true) == nil)
+
+  -- default template name per scope (global -> daily), title defaults to date
+  local pd = notes.from_template("global")
+  check("templates: default name used", pd ~= nil and notes.read(pd).title == os.date("%Y-%m-%d"))
+
+  -- unknown template: notify (stubbed) and return nil
+  local notified = false
+  local orig_notify = vim.notify
+  vim.notify = function()
+    notified = true
+  end
+  local pn = notes.from_template("global", "nope")
+  vim.notify = orig_notify
+  check("templates: unknown returns nil", pn == nil and notified)
+
+  -- picker flow: template picker -> title input -> note created and opened
+  -- (current buffer is an unnamed scratch, so the scope resolves to global)
+  vim.api.nvim_set_current_buf(vim.api.nvim_create_buf(true, false))
+  local sel1, sel2, sel1_cb, sel2_cb, input_cb = nil, nil, nil, nil, nil
+  local orig_select, orig_input = vim.ui.select, vim.ui.input
+  vim.ui.select = function(items, _, c)
+    if not sel1 then
+      sel1, sel1_cb = items, c
+    else
+      sel2, sel2_cb = items, c
+    end
+  end
+  vim.ui.input = function(_, c)
+    input_cb = c
+  end
+  picker.new_from_template()
+  check("templates: outer picker shown", type(sel1) == "table" and #sel1 == 1)
+  if sel1 and #sel1 == 1 then
+    sel1_cb(sel1[1])
+    check("templates: template list offered", type(sel2) == "table" and vim.tbl_contains(sel2, "daily"))
+    if sel2 then
+      sel2_cb("scratch")
+      input_cb("Scratchy")
+      vim.ui.select, vim.ui.input = orig_select, orig_input
+      local found = false
+      for _, rec in ipairs(store.index()) do
+        if rec.title == "Scratchy" then
+          found = true
+        end
+      end
+      check("templates: note created via picker", found)
+      check("templates: picker opened the note",
+        vim.api.nvim_buf_get_name(0):find("scratchy", 1, true) ~= nil)
+    end
+  end
+  vim.ui.select, vim.ui.input = orig_select, orig_input
+
+  -- the <leader>nN keymap is registered (leader expanded)
+  local kmaps = vim.api.nvim_get_keymap("n")
+  local bound = false
+  for _, m in ipairs(kmaps) do
+    if m.desc == "Nnotes: New note from template" then
+      bound = true
+      break
+    end
+  end
+  check("templates: new_template keymap registered", bound)
+end
+
 print(string.format("%d passed, %d failed", passed, failed))
 if failed > 0 then
   vim.cmd("cquit")

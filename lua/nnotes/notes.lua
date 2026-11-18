@@ -69,6 +69,38 @@ M.new_note = function(opts)
   return path
 end
 
+-- create a note from a named template; title defaults to today's date for
+-- the daily template, else the template name
+M.from_template = function(scope, name, title)
+  local templates = require("nnotes.templates")
+  local cfg = config()
+  scope = scope or "global"
+  name = name or (cfg.default_template and (cfg.default_template[scope] or cfg.default_template.global)) or "daily"
+  local text = templates.load(name)
+  if not text then
+    vim.notify("Template not found: " .. name, vim.log.WARN)
+    return nil
+  end
+  local root = store.find_project_root(vim.api.nvim_buf_get_name(0))
+  title = title or (name == "daily" and os.date("%Y-%m-%d") or name)
+  local rendered = templates.render(text, {
+    title = title,
+    scope = scope,
+    project = (scope == "project" and root) and vim.fs.basename(root) or "",
+  })
+  local meta, body = store.parse(rendered)
+  local path = M.new_note({
+    scope = scope,
+    title = title,
+    project_root = root,
+    tags = meta.tags,
+    status = meta.status,
+    project_name = meta.project,
+    body = body,
+  })
+  return path
+end
+
 M.write = function(path, meta, body)
   meta = meta or {}
   local existing = {}

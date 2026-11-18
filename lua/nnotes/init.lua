@@ -43,6 +43,47 @@ local defaults = {
   },
 }
 
+-- vim.keymap.set expands <leader> at set-time, so a binding written as
+-- "<leader>nN" sticks to whatever mapleader is when setup() runs. Bind the
+-- expanded raw key, and re-apply when the leader changes (BufReadPost fires
+-- on every buffer load, which catches a leader set in a file read after
+-- setup). Same pattern as mywords.
+local function expand_leader(lhs)
+  return lhs
+    :gsub("<leader>", function()
+      return vim.g.mapleader or "\\"
+    end)
+    :gsub("<LocalLeader>", function()
+      return vim.g.maplocalleader or "\\"
+    end)
+end
+
+local function leader_sig()
+  return (vim.g.mapleader or "\\") .. "|" .. (vim.g.maplocalleader or "\\")
+end
+
+local applied, applied_leader = {}, nil
+
+local function apply_keymaps(cfg)
+  for _, m in ipairs(applied) do
+    pcall(vim.keymap.del, m.mode, m.lhs)
+  end
+  applied = {}
+  applied_leader = leader_sig()
+
+  local picker = require("nnotes.picker")
+  local entries = {
+    { mode = "n", lhs = cfg.keys.new_template, rhs = function() picker.new_from_template() end, desc = "Nnotes: New note from template" },
+  }
+  for _, e in ipairs(entries) do
+    if e.lhs and e.lhs ~= "" then
+      local lhs = expand_leader(e.lhs)
+      vim.keymap.set(e.mode, lhs, e.rhs, { desc = e.desc })
+      table.insert(applied, { mode = e.mode, lhs = lhs })
+    end
+  end
+end
+
 M.setup = function(opts)
   opts = opts or {}
   _config = vim.tbl_deep_extend("force", vim.deepcopy(defaults), opts)
@@ -54,6 +95,16 @@ M.setup = function(opts)
   local store = require("nnotes.store")
   store.init(_config)
   require("nnotes.formatting").setup(_config)
+
+  apply_keymaps(_config)
+  vim.api.nvim_create_autocmd("BufReadPost", {
+    group = vim.api.nvim_create_augroup("nnotes", {}),
+    callback = function()
+      if applied_leader ~= leader_sig() then
+        apply_keymaps(_config)
+      end
+    end,
+  })
 
   return M
 end
