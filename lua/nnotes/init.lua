@@ -39,7 +39,7 @@ local defaults = {
     delete = "<leader>nx",
     move = "<leader>nM",
     sync = "<leader>nS",
-    sync_status = "<leader>ns",
+    sync_status = "<leader>ng",
   },
 }
 
@@ -74,10 +74,13 @@ local function apply_keymaps(cfg)
   local picker = require("nnotes.picker")
   local deadlines = require("nnotes.deadlines")
   local sidebar = require("nnotes.sidebar")
+  local sync = require("nnotes.sync")
   local entries = {
     { mode = "n", lhs = cfg.keys.new_template, rhs = function() picker.new_from_template() end, desc = "Nnotes: New note from template" },
     { mode = "n", lhs = cfg.keys.deadlines, rhs = function() deadlines.pick() end, desc = "Nnotes: Upcoming deadlines" },
     { mode = "n", lhs = cfg.keys.sidebar, rhs = function() sidebar.toggle() end, desc = "Nnotes: Toggle sidebar" },
+    { mode = "n", lhs = cfg.keys.sync, rhs = function() sync.sync_current() end, desc = "Nnotes: Sync" },
+    { mode = "n", lhs = cfg.keys.sync_status, rhs = function() sync.status_current() end, desc = "Nnotes: Sync status" },
   }
   for _, e in ipairs(entries) do
     if e.lhs and e.lhs ~= "" then

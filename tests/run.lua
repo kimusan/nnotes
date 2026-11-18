@@ -768,6 +768,118 @@ do
   check("sidebar: sidebar keymap registered", bound)
 end
 
+-- Task 12: github sync (temp git repos) + age filter setup
+do
+  local dir, proj = fresh_env("sync")
+  require("nnotes").setup({ global_dir = dir })
+  local store = require("nnotes.store")
+  store.init(require("nnotes").config())
+  local sync = require("nnotes.sync")
+
+  -- scope dir resolution
+  check("sync: global scope dir", sync.scope_dir("global") == dir)
+
+  -- init_scope creates a git repo with an initial commit
+  sync.init_scope("global")
+  check("sync: repo initialized", vim.loop.fs_stat(dir .. "/.git") ~= nil)
+  check("sync: initial commit present",
+    (vim.fn.system({ "git", "-C", dir, "log", "-1", "--oneline" })):find("initial commit", 1, true) ~= nil)
+
+  -- commit_changes stages and commits changed notes, returning the count
+  vim.fn.writefile({ "# One" }, dir .. "/2026-11-18-a.md")
+  vim.fn.writefile({ "# Two" }, dir .. "/2026-11-18-b.md")
+  local n = sync.commit_changes(dir)
+  check("sync: commit_changes counts changed files", n == 2)
+  local msg = vim.fn.system({ "git", "-C", dir, "log", "-1", "--pretty=%s" })
+  check("sync: commit message has date and count",
+    msg:find(os.date("%Y-%m-%d"), 1, true) ~= nil and msg:find("2 changes", 1, true) ~= nil)
+
+  -- sync with no remote commits and reports ok-local
+  vim.fn.writefile({ "# Three" }, dir .. "/2026-11-18-c.md")
+  check("sync: local-only sync", sync.sync("global") == "ok-local")
+
+  -- add a bare remote; sync pulls (ff) and pushes
+  local remote = vim.fn.tempname() .. "/remote.git"
+  vim.fn.system({ "git", "init", "--bare", "-b", "main", remote })
+  vim.fn.system({ "git", "-C", dir, "remote", "add", "origin", remote })
+  vim.fn.writefile({ "# Four" }, dir .. "/2026-11-18-d.md")
+  check("sync: sync with remote", sync.sync("global") == "ok")
+  -- the pushed commit reached the remote
+  local remote_log = vim.fn.system({ "git", "-C", remote, "log", "-1", "--oneline" })
+  check("sync: commit pushed to remote", remote_log ~= "")
+
+  -- status reports the remote url
+  local st = sync.status("global")
+  check("sync: status shows remote", st:find("remote:", 1, true) ~= nil)
+
+  -- age filters: with age available, setup writes .gitattributes + config
+  if sync.age_available() then
+    check("sync: age filters applied", sync.setup_age_filters(dir) == true)
+    local attrs = table.concat(vim.fn.readfile(dir .. "/.gitattributes"), "\n")
+    check("sync: gitattributes filters md", attrs:find("filter=agecrypt", 1, true) ~= nil)
+    local clean = vim.fn.system({ "git", "-C", dir, "config", "filter.agecrypt.clean" })
+    local smudge = vim.fn.system({ "git", "-C", dir, "config", "filter.agecrypt.smudge" })
+    check("sync: clean filter set", clean:find("age -r", 1, true) ~= nil)
+    check("sync: smudge filter set", smudge:find("age -d", 1, true) ~= nil)
+  else
+    -- age absent: setup degrades (no filters, returns false)
+    check("sync: age filters skipped when absent", sync.setup_age_filters(dir) == false)
+  end
+
+  -- age round-trip (skipped when age/age-keygen absent): clean encrypts the
+  -- blob git stores, smudge decrypts it back on checkout
+  if sync.age_available() and vim.fn.executable("age-keygen") == 1 then
+    local tmp = vim.fn.tempname() .. "/agerepo"
+    vim.fn.mkdir(tmp, "p")
+    vim.fn.system({ "git", "-C", tmp, "init", "-b", "main" })
+    vim.fn.system({ "git", "-C", tmp, "config", "user.name", "t" })
+    vim.fn.system({ "git", "-C", tmp, "config", "user.email", "t@t" })
+    local keyfile = tmp .. "/key.txt"
+    vim.fn.system({ "age-keygen", "-o", keyfile })
+    if vim.v.shell_error == 0 and vim.loop.fs_stat(keyfile) then
+      local recipient
+      for _, l in ipairs(vim.fn.readfile(keyfile)) do
+        local pk = l:match("# public key: (%S+)")
+        if pk then
+          recipient = pk
+          break
+        end
+      end
+      -- NNOTES_AGE_KEY is the key file path (age -d -i), RECIPIENT the public key
+      vim.env.NNOTES_AGE_KEY = keyfile
+      vim.env.NNOTES_AGE_RECIPIENT = recipient
+      sync.setup_age_filters(tmp)
+      vim.fn.writefile({ "top secret note" }, tmp .. "/secret.md")
+      vim.fn.system({ "git", "-C", tmp, "add", "secret.md" })
+      vim.fn.system({ "git", "-C", tmp, "commit", "-m", "enc" })
+      local stored = vim.fn.system({ "git", "-C", tmp, "cat-file", "-p", "HEAD:secret.md" })
+      check("sync: age clean encrypts stored blob",
+        stored:find("age-encryption.org", 1, true) ~= nil
+        and stored:find("top secret note", 1, true) == nil)
+      vim.fn.delete(tmp .. "/secret.md")
+      vim.fn.system({ "git", "-C", tmp, "checkout", "--", "secret.md" })
+      local back = table.concat(vim.fn.readfile(tmp .. "/secret.md"), "\n")
+      check("sync: age smudge decrypts on checkout", back:find("top secret note", 1, true) ~= nil)
+      vim.env.NNOTES_AGE_KEY = nil
+      vim.env.NNOTES_AGE_RECIPIENT = nil
+    end
+  end
+
+  -- the sync keymaps are registered
+  local kmaps = vim.api.nvim_get_keymap("n")
+  local have_sync, have_status = false, false
+  for _, m in ipairs(kmaps) do
+    if m.desc == "Nnotes: Sync" then
+      have_sync = true
+    end
+    if m.desc == "Nnotes: Sync status" then
+      have_status = true
+    end
+  end
+  check("sync: sync keymap registered", have_sync)
+  check("sync: sync_status keymap registered", have_status)
+end
+
 print(string.format("%d passed, %d failed", passed, failed))
 if failed > 0 then
   vim.cmd("cquit")
