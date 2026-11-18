@@ -142,4 +142,79 @@ M.rewrite_references = function(old_path, new_path, new_title)
   return count
 end
 
+-- the link whose span contains a 0-based column on a single line, or nil
+M.link_at = function(line, col)
+  for _, l in ipairs(M.parse(line)) do
+    if col >= l.start - 1 and col <= l.finish - 1 then
+      return l
+    end
+  end
+  return nil
+end
+
+-- relative path from `from_dir` to `to_path` (POSIX). No built-in
+-- vim.fs.relative, so compute it from normalized components.
+local function relpath(from_dir, to_path)
+  local function split(p)
+    return vim.split(vim.fs.normalize(p), "/", { plain = true, trimempty = true })
+  end
+  local a, b = split(from_dir), split(to_path)
+  local i = 1
+  while i <= #a and i <= #b and a[i] == b[i] do
+    i = i + 1
+  end
+  local parts = {}
+  for j = i, #a do
+    table.insert(parts, "..")
+  end
+  for j = i, #b do
+    table.insert(parts, b[j])
+  end
+  return #parts == 0 and "." or table.concat(parts, "/")
+end
+
+-- link text pointing at `rec` as written from `from_dir`, per `style`
+-- ("wiki" -> [[Title]], "markdown" -> [Title](relative path))
+M.render_link = function(rec, from_dir, style)
+  if style == "markdown" then
+    local base = from_dir or vim.fn.getcwd()
+    return ("[%s](%s)"):format(rec.title, relpath(base, rec.path))
+  end
+  return ("[[%s]]"):format(rec.title)
+end
+
+-- open the note the link under the cursor points to; unresolved links are
+-- left as candidates for a future note
+M.follow_link = function()
+  local line = vim.api.nvim_get_current_line()
+  local link = M.link_at(line, vim.fn.col(".") - 1)
+  if not link then
+    vim.notify("No link under cursor", vim.log.INFO)
+    return
+  end
+  local resolved = M.resolve(link.target, link,
+    vim.fs.dirname(vim.api.nvim_buf_get_name(0)))
+  if not resolved then
+    vim.notify("Unresolved: " .. link.target, vim.log.INFO)
+    return
+  end
+  vim.cmd("edit " .. vim.fn.fnameescape(resolved))
+end
+
+-- insert a link to the current note at the cursor, per link_style
+M.make_link = function()
+  local name = vim.api.nvim_buf_get_name(0)
+  local rec = store.get_by_path(name)
+  if not rec then
+    vim.notify("Not a note buffer", vim.log.WARN)
+    return
+  end
+  local text = M.render_link(rec, vim.fs.dirname(name),
+    require("nnotes").config().link_style)
+  local cur = vim.api.nvim_win_get_cursor(0)
+  local row, col = cur[1], cur[2]
+  vim.api.nvim_buf_set_text(0, row - 1, col, row - 1, col, { text })
+  vim.api.nvim_win_set_cursor(0, { row - 1, col + #text })
+end
+
 return M

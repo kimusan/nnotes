@@ -880,6 +880,171 @@ do
   check("sync: sync_status keymap registered", have_status)
 end
 
+-- Task 13: command flows (link ops, note commands) + full keymap set
+do
+  local dir, proj = fresh_env("commands")
+  require("nnotes").setup({ global_dir = dir })
+  local store = require("nnotes.store")
+  store.init(require("nnotes").config())
+  local notes = require("nnotes.notes")
+  local links = require("nnotes.links")
+  local picker = require("nnotes.picker")
+
+  -- render_link: wiki and markdown styles
+  local rec = { title = "Target", path = dir .. "/2026-11-18-target.md" }
+  check("commands: render_link wiki", links.render_link(rec, dir, "wiki") == "[[Target]]")
+  check("commands: render_link markdown",
+    links.render_link(rec, dir, "markdown") == "[Target](2026-11-18-target.md)")
+
+  -- link_at: hit and miss
+  local line = "See [[Target]] here."
+  local hit = links.link_at(line, 8)
+  check("commands: link_at finds link", hit ~= nil and hit.target == "Target")
+  check("commands: link_at misses outside", links.link_at(line, 1) == nil)
+
+  -- today: creates on first call, opens existing on second
+  picker.today()
+  local date = os.date("%Y-%m-%d")
+  local first = store.get_by_title(date)
+  check("commands: today creates note", first ~= nil)
+  picker.today()
+  check("commands: today opens existing",
+    vim.api.nvim_buf_get_name(0) == (first and first.path or ""))
+
+  -- tags: two notes share a tag; picking the tag lists both
+  local ta = notes.new_note({ scope = "global", title = "Tag A", tags = { "work" } })
+  local tb = notes.new_note({ scope = "global", title = "Tag B", tags = { "work" } })
+  store.refresh(0)
+  local sels = {}
+  local orig_select = vim.ui.select
+  vim.ui.select = function(items, _, c)
+    table.insert(sels, { items = items, cb = c })
+  end
+  picker.tags()
+  check("commands: tags first level has the tag",
+    #sels == 1 and sels[1].items[1].text:find("#work", 1, true) ~= nil)
+  if #sels == 1 then
+    sels[1].cb(sels[1].items[1])
+    check("commands: tags second level lists notes", #sels == 2 and #sels[2].items == 2)
+    if #sels == 2 then
+      sels[2].cb(sels[2].items[1])
+      check("commands: tags pick opens a note",
+        vim.api.nvim_buf_get_name(0):match("%.md$") ~= nil)
+    end
+  end
+  vim.ui.select = orig_select
+
+  -- backlinks: a note linking to the target is found
+  local target = notes.new_note({ scope = "global", title = "BL Target" })
+  local src = notes.new_note({ scope = "global", title = "BL Source" })
+  notes.write(src, { title = "BL Source" }, "see [[BL Target]]\n")
+  store.refresh(0)
+  local backs = links.backlinks(target)
+  check("commands: backlinks found", #backs == 1 and backs[1].path == src)
+  -- picker.backlists opens for the current note
+  local bbuf = vim.api.nvim_create_buf(false, false)
+  vim.api.nvim_buf_set_name(bbuf, target)
+  vim.api.nvim_set_current_buf(bbuf)
+  sels = {}
+  vim.ui.select = function(items, _, c)
+    table.insert(sels, { items = items, cb = c })
+  end
+  picker.backlinks()
+  check("commands: backlinks picker lists the source",
+    #sels == 1 and sels[1].items[1].text:find("BL Source", 1, true) ~= nil)
+  vim.ui.select = orig_select
+
+  -- follow_link: open the source note (it links to the target), put the
+  -- cursor on the line holding the link, follow it to the target
+  vim.cmd("edit " .. vim.fn.fnameescape(src))
+  local src_lines = vim.api.nvim_buf_get_lines(0, 0, -1, false)
+  local linkline, linkcol = 1, 0
+  for i, l in ipairs(src_lines) do
+    local s = l:find("[[", 1, true)
+    if s then
+      linkline, linkcol = i, s - 1
+      break
+    end
+  end
+  vim.api.nvim_win_set_cursor(0, { linkline, linkcol })
+  store.refresh(0)
+  links.follow_link()
+  check("commands: follow_link opens target", vim.api.nvim_buf_get_name(0) == target)
+
+  -- make_link: open a note, insert a wiki link to it at a body cursor
+  local mk = notes.new_note({ scope = "global", title = "Link Me" })
+  vim.cmd("edit " .. vim.fn.fnameescape(mk))
+  local nlines = #vim.api.nvim_buf_get_lines(0, 0, -1, false)
+  vim.api.nvim_win_set_cursor(0, { nlines, 0 })
+  links.make_link()
+  local mk_body = table.concat(vim.api.nvim_buf_get_lines(0, 0, -1, false), "\n")
+  check("commands: make_link inserts wiki link",
+    mk_body:find("[[Link Me]]", 1, true) ~= nil)
+  check("commands: make_link leaves frontmatter intact",
+    vim.api.nvim_buf_get_lines(0, 0, 1, false)[1] == "---")
+
+  -- rename: stub the input, expect the note renamed and links intact
+  local rn = notes.new_note({ scope = "global", title = "Rename Me" })
+  local rbuf = vim.api.nvim_create_buf(false, false)
+  vim.api.nvim_buf_set_name(rbuf, rn)
+  vim.api.nvim_set_current_buf(rbuf)
+  local orig_input = vim.ui.input
+  vim.ui.input = function(_, c)
+    c("Renamed Note")
+  end
+  picker.rename()
+  vim.ui.input = orig_input
+  check("commands: rename renamed the note",
+    store.get_by_title("Renamed Note") ~= nil and vim.loop.fs_stat(rn) == nil)
+
+  -- delete: stub confirm(Yes), expect the file gone
+  local dl_path = notes.new_note({ scope = "global", title = "Delete Me" })
+  local dbuf = vim.api.nvim_create_buf(false, false)
+  vim.api.nvim_buf_set_name(dbuf, dl_path)
+  vim.api.nvim_set_current_buf(dbuf)
+  local orig_confirm = vim.fn.confirm
+  vim.fn.confirm = function()
+    return 1
+  end
+  picker.delete()
+  vim.fn.confirm = orig_confirm
+  check("commands: delete removed the note", vim.loop.fs_stat(dl_path) == nil)
+
+  -- move: a project note moves to the global scope. Name the buffer with
+  -- the note's real path so get_by_path/move operate on it.
+  local mv = notes.new_note({ scope = "project", title = "Mover", project_root = proj })
+  local mbuf = vim.api.nvim_create_buf(false, false)
+  vim.api.nvim_buf_set_name(mbuf, mv)
+  vim.api.nvim_set_current_buf(mbuf)
+  store.refresh(mbuf)
+  picker.move()
+  store.refresh(mbuf)
+  local mover = store.get_by_title("Mover")
+  check("commands: move moved to global",
+    vim.loop.fs_stat(mv) == nil and mover ~= nil and mover.scope == "global")
+
+  -- all 16 global keymaps are registered
+  local want = {
+    "Nnotes: New note", "Nnotes: Today's note", "Nnotes: New note from template",
+    "Nnotes: Search notes", "Nnotes: Recent notes", "Nnotes: Tags",
+    "Nnotes: Backlinks", "Nnotes: Follow link", "Nnotes: Make link",
+    "Nnotes: Upcoming deadlines", "Nnotes: Toggle sidebar",
+    "Nnotes: Rename note", "Nnotes: Delete note", "Nnotes: Move note",
+    "Nnotes: Sync", "Nnotes: Sync status",
+  }
+  local have = {}
+  for _, m in ipairs(vim.api.nvim_get_keymap("n")) do
+    have[m.desc] = true
+  end
+  local all = true
+  for _, d in ipairs(want) do
+    if not have[d] then
+      all = false
+    end
+  end
+  check("commands: all global keymaps registered", all)
+end
+
 print(string.format("%d passed, %d failed", passed, failed))
 if failed > 0 then
   vim.cmd("cquit")

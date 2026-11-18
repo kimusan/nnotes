@@ -75,10 +75,22 @@ local function apply_keymaps(cfg)
   local deadlines = require("nnotes.deadlines")
   local sidebar = require("nnotes.sidebar")
   local sync = require("nnotes.sync")
+  local links = require("nnotes.links")
   local entries = {
+    { mode = "n", lhs = cfg.keys.new, rhs = function() picker.new() end, desc = "Nnotes: New note" },
+    { mode = "n", lhs = cfg.keys.today, rhs = function() picker.today() end, desc = "Nnotes: Today's note" },
     { mode = "n", lhs = cfg.keys.new_template, rhs = function() picker.new_from_template() end, desc = "Nnotes: New note from template" },
+    { mode = "n", lhs = cfg.keys.search, rhs = function() picker.search() end, desc = "Nnotes: Search notes" },
+    { mode = "n", lhs = cfg.keys.recent, rhs = function() picker.recents() end, desc = "Nnotes: Recent notes" },
+    { mode = "n", lhs = cfg.keys.tags, rhs = function() picker.tags() end, desc = "Nnotes: Tags" },
+    { mode = "n", lhs = cfg.keys.backlinks, rhs = function() picker.backlinks() end, desc = "Nnotes: Backlinks" },
+    { mode = "n", lhs = cfg.keys.follow_link, rhs = function() links.follow_link() end, desc = "Nnotes: Follow link" },
+    { mode = "n", lhs = cfg.keys.make_link, rhs = function() links.make_link() end, desc = "Nnotes: Make link" },
     { mode = "n", lhs = cfg.keys.deadlines, rhs = function() deadlines.pick() end, desc = "Nnotes: Upcoming deadlines" },
     { mode = "n", lhs = cfg.keys.sidebar, rhs = function() sidebar.toggle() end, desc = "Nnotes: Toggle sidebar" },
+    { mode = "n", lhs = cfg.keys.rename, rhs = function() picker.rename() end, desc = "Nnotes: Rename note" },
+    { mode = "n", lhs = cfg.keys.delete, rhs = function() picker.delete() end, desc = "Nnotes: Delete note" },
+    { mode = "n", lhs = cfg.keys.move, rhs = function() picker.move() end, desc = "Nnotes: Move note" },
     { mode = "n", lhs = cfg.keys.sync, rhs = function() sync.sync_current() end, desc = "Nnotes: Sync" },
     { mode = "n", lhs = cfg.keys.sync_status, rhs = function() sync.status_current() end, desc = "Nnotes: Sync status" },
   }
