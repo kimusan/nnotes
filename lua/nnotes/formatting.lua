@@ -190,7 +190,8 @@ local function auto_continue()
     vim.api.nvim_buf_set_text(0, row - 1, 0, row - 1, #line, { first })
   else
     vim.api.nvim_buf_set_lines(0, row - 1, row, false, { first, second })
-    vim.api.nvim_win_set_cursor(0, { row, newcol })
+    -- the split inserts `second` as a new line below `first` (1-based row+1)
+    vim.api.nvim_win_set_cursor(0, { row + 1, newcol })
   end
 end
 
