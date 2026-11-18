@@ -80,7 +80,9 @@ M.open = function(title, items, on_pick)
     Snacks.picker.pick({
       items = picker_items,
       format = function(item)
-        return item.text
+        -- snacks expects a highlight line: a list of {text, hl} segments, not
+        -- a bare string (highlight.resolve ipairs's the returned line).
+        return { { item.text } }
       end,
       confirm = function(item)
         on_pick(items[item.idx] or { file = item.file })
