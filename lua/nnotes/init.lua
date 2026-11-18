@@ -73,9 +73,11 @@ local function apply_keymaps(cfg)
 
   local picker = require("nnotes.picker")
   local deadlines = require("nnotes.deadlines")
+  local sidebar = require("nnotes.sidebar")
   local entries = {
     { mode = "n", lhs = cfg.keys.new_template, rhs = function() picker.new_from_template() end, desc = "Nnotes: New note from template" },
     { mode = "n", lhs = cfg.keys.deadlines, rhs = function() deadlines.pick() end, desc = "Nnotes: Upcoming deadlines" },
+    { mode = "n", lhs = cfg.keys.sidebar, rhs = function() sidebar.toggle() end, desc = "Nnotes: Toggle sidebar" },
   }
   for _, e in ipairs(entries) do
     if e.lhs and e.lhs ~= "" then

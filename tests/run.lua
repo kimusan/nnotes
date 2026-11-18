@@ -716,6 +716,58 @@ do
   check("deadlines: deadlines keymap registered", bound)
 end
 
+-- Task 11: notes sidebar (scope dir resolution + keymap)
+do
+  local dir, proj = fresh_env("sidebar")
+  require("nnotes").setup({ global_dir = dir })
+  local store = require("nnotes.store")
+  store.init(require("nnotes").config())
+  local sidebar = require("nnotes.sidebar")
+
+  -- outside a project the sidebar roots at the global dir. /tmp/.git may
+  -- exist on the host, so swap in a marker that cannot be present to make
+  -- the "no root" case deterministic (same trick as the scope test).
+  local cfg = require("nnotes").config()
+  local saved_patterns = cfg.project_root_patterns
+  cfg.project_root_patterns = { ".nnotes-root-marker-xyz" }
+  local gbuf = vim.api.nvim_create_buf(true, false)
+  vim.api.nvim_buf_set_name(gbuf, (vim.fn.tempname() .. "/sb-orphan") .. "/probe.md")
+  vim.api.nvim_set_current_buf(gbuf)
+  check("sidebar: global scope dir outside project", sidebar.scope_dir() == dir)
+  cfg.project_root_patterns = saved_patterns
+
+  -- inside a project it roots at <project>/.nnotes (creating it)
+  local pbuf = vim.api.nvim_create_buf(true, false)
+  vim.api.nvim_buf_set_name(pbuf, proj .. "/note.md")
+  vim.api.nvim_set_current_buf(pbuf)
+  local pdir = sidebar.scope_dir()
+  check("sidebar: project scope dir inside project",
+    pdir == vim.fs.joinpath(proj, ".nnotes"))
+  check("sidebar: project dir created", vim.loop.fs_stat(pdir) ~= nil)
+
+  -- toggle/open degrade gracefully without snacks (notify, no error)
+  local notified = false
+  local orig_notify = vim.notify
+  vim.notify = function()
+    notified = true
+  end
+  local ok = pcall(sidebar.toggle)
+  vim.notify = orig_notify
+  check("sidebar: toggle does not error without snacks", ok)
+  check("sidebar: toggle notifies when snacks missing", notified)
+
+  -- the <leader>ns keymap is registered
+  local kmaps = vim.api.nvim_get_keymap("n")
+  local bound = false
+  for _, m in ipairs(kmaps) do
+    if m.desc == "Nnotes: Toggle sidebar" then
+      bound = true
+      break
+    end
+  end
+  check("sidebar: sidebar keymap registered", bound)
+end
+
 print(string.format("%d passed, %d failed", passed, failed))
 if failed > 0 then
   vim.cmd("cquit")
