@@ -548,28 +548,31 @@ do
   vim.notify = orig_notify
   check("templates: unknown returns nil", pn == nil and notified)
 
-  -- picker flow: template picker -> title input -> note created and opened
-  -- (current buffer is an unnamed scratch, so the scope resolves to global)
+  -- picker flow: template picker (one item per template) -> title input ->
+  -- note created and opened. (current buffer is an unnamed scratch, so the
+  -- scope resolves to global; no snacks here, so M.open uses vim.ui.select)
   vim.api.nvim_set_current_buf(vim.api.nvim_create_buf(true, false))
-  local sel1, sel2, sel1_cb, sel2_cb, input_cb = nil, nil, nil, nil, nil
+  local sel1, sel1_cb, input_cb = nil, nil, nil
   local orig_select, orig_input = vim.ui.select, vim.ui.input
   vim.ui.select = function(items, _, c)
-    if not sel1 then
-      sel1, sel1_cb = items, c
-    else
-      sel2, sel2_cb = items, c
-    end
+    sel1, sel1_cb = items, c
   end
   vim.ui.input = function(_, c)
     input_cb = c
   end
   picker.new_from_template()
-  check("templates: outer picker shown", type(sel1) == "table" and #sel1 == 1)
-  if sel1 and #sel1 == 1 then
-    sel1_cb(sel1[1])
-    check("templates: template list offered", type(sel2) == "table" and vim.tbl_contains(sel2, "daily"))
-    if sel2 then
-      sel2_cb("scratch")
+  check("templates: picker lists each template", type(sel1) == "table" and #sel1 == 5)
+  if sel1 and #sel1 == 5 then
+    local scratch
+    for _, it in ipairs(sel1) do
+      if it.name == "scratch" then
+        scratch = it
+      end
+    end
+    check("templates: scratch item present", scratch ~= nil)
+    if scratch then
+      sel1_cb(scratch)
+      check("templates: title input offered after pick", type(input_cb) == "function")
       input_cb("Scratchy")
       vim.ui.select, vim.ui.input = orig_select, orig_input
       local found = false

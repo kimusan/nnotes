@@ -66,19 +66,21 @@ local function fallback_select(title, items, on_pick)
   end)
 end
 
-M.open = function(title, items, on_pick)
+M.open = function(title, items, on_pick, opts)
   if #items == 0 then
     vim.notify("No notes found", vim.log.INFO)
     return
   end
+  opts = opts or {}
   if has_snacks() then
     local Snacks = require("snacks")
     local picker_items = {}
     for i, it in ipairs(items) do
       table.insert(picker_items, { text = it.text, file = it.file, idx = i })
     end
-    Snacks.picker.pick({
+    return Snacks.picker.pick({
       items = picker_items,
+      layout = opts.layout,
       format = function(item)
         -- snacks expects a highlight line: a list of {text, hl} segments, not
         -- a bare string (highlight.resolve ipairs's the returned line).
@@ -121,20 +123,26 @@ M.new_from_template = function()
     return
   end
   local scope = store.find_project_root(vim.api.nvim_buf_get_name(0)) and "project" or "global"
-  M.open("New note from template", { { text = table.concat(names, "\n"), file = "" } }, function()
-    vim.ui.select(names, { prompt = "Template: " }, function(name)
-      if not name then
-        return
+  local items = {}
+  for _, name in ipairs(names) do
+    table.insert(items, { text = name, file = "", name = name })
+  end
+  local picker = M.open("New note from template", items, function(it)
+    -- drop the snacks picker before the next prompt, or it keeps stealing focus
+    if picker and picker.close then
+      picker:close()
+    end
+    vim.ui.input({ prompt = "Title: ", default = it.name }, function(title)
+      if not title or title == "" then
+        title = it.name
       end
-      vim.ui.input({ prompt = "Title: " }, function(title)
-        local notes = require("nnotes.notes")
-        local path = notes.from_template(scope, name, title)
-        if path then
-          open_note(path)
-        end
-      end)
+      local notes = require("nnotes.notes")
+      local path = notes.from_template(scope, it.name, title)
+      if path then
+        open_note(path)
+      end
     end)
-  end)
+  end, { layout = { preview = false } })
 end
 
 -- new note: pick a scope, then a title
@@ -179,7 +187,10 @@ M.tags = function()
   for _, t in ipairs(tags) do
     table.insert(items, { text = ("#%s  (%d)"):format(t, #store.tags_of(t)), file = "", tag = t })
   end
-  M.open("Notes by tag", items, function(it)
+  local picker = M.open("Notes by tag", items, function(it)
+    if picker and picker.close then
+      picker:close()
+    end
     local recs = store.tags_of(it.tag)
     local sub = {}
     for _, r in ipairs(recs) do
@@ -188,7 +199,7 @@ M.tags = function()
     M.open(("#%s — %d notes"):format(it.tag, #sub), sub, function(ch)
       open_note(ch.file)
     end)
-  end)
+  end, { layout = { preview = false } })
 end
 
 -- picker of notes that link to the current note
