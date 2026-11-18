@@ -338,6 +338,123 @@ do
     notes.read(newpath).title == "Renamed Note")
 end
 
+-- Task 8: markdown formatting (pure transforms, TOC, word count, keymaps)
+do
+  local dir, proj = fresh_env("formatting")
+  require("nnotes").setup({ global_dir = dir })
+  local store = require("nnotes.store")
+  store.init(require("nnotes").config())
+  local formatting = require("nnotes.formatting")
+
+  -- line op transforms are toggles
+  check("formatting: list toggle adds prefix",
+    formatting.transform_line("item", "list") == "- item")
+  check("formatting: list toggle removes prefix",
+    formatting.transform_line("- item", "list") == "item")
+  check("formatting: task toggle adds prefix",
+    formatting.transform_line("do it", "task") == "- [ ] do it")
+  check("formatting: quote toggle adds prefix",
+    formatting.transform_line("note", "quote") == "> note")
+  check("formatting: quote toggle removes prefix",
+    formatting.transform_line("> note", "quote") == "note")
+
+  -- heading toggle: plain -> heading, same level -> plain, other level -> swap
+  check("formatting: heading 1 applied",
+    formatting.transform_line("Title", "heading", 1) == "# Title")
+  check("formatting: heading 1 removed on re-toggle",
+    formatting.transform_line("# Title", "heading", 1) == "Title")
+  check("formatting: heading level swaps",
+    formatting.transform_line("# Title", "heading", 3) == "### Title")
+
+  -- apply_op transforms only the given 1-based inclusive range
+  local out = formatting.apply_op({ "a", "b", "c" }, 2, 3, "list")
+  check("formatting: apply_op range only",
+    out[1] == "a" and out[2] == "- b" and out[3] == "- c")
+
+  -- continue_line: <CR> on a list item continues the prefix
+  local first, second, newcol = formatting.continue_line("- item a", 8)
+  check("formatting: enter continues list",
+    first == "- item a" and second == "- " and newcol == 2)
+  -- <CR> mid-item moves the remaining content to the new line
+  first, second = formatting.continue_line("- item a", 2)
+  check("formatting: enter mid-item keeps rest",
+    first == "- " and second == "- item a" and newcol == 2)
+  -- <CR> on an empty item exits the list
+  first, second = formatting.continue_line("- ", 2)
+  check("formatting: empty item exits list",
+    first == "" and second == nil)
+  -- task and quote continue too
+  first, second = formatting.continue_line("- [ ] todo", 10)
+  check("formatting: enter continues task",
+    first == "- [ ] todo" and second == "- [ ] ")
+  first, second = formatting.continue_line("> quoted", 8)
+  check("formatting: enter continues quote",
+    first == "> quoted" and second == "> ")
+  -- a plain line just splits
+  first, second, newcol = formatting.continue_line("hello", 2)
+  check("formatting: plain line splits",
+    first == "he" and second == "llo" and newcol == 2)
+
+  -- wraps use the marker on both sides
+  check("formatting: bold wrap", formatting.wrap_text("word", "**") == "**word**")
+  check("formatting: italic wrap", formatting.wrap_text("word", "*") == "*word*")
+
+  -- TOC + word_count operate on a buffer
+  local lines = {
+    "---",
+    "title: Formatting",
+    "created: 2026-11-18",
+    "---",
+    "",
+    "one two three four five",
+    "# First",
+    "## Second",
+    "# Third",
+  }
+  local buf = vim.api.nvim_create_buf(false, false)
+  vim.api.nvim_set_current_buf(buf)
+  vim.bo[buf].filetype = "markdown"
+
+  -- word count skips frontmatter and counts body tokens
+  vim.api.nvim_buf_set_lines(buf, 0, -1, false, {
+    "---",
+    "title: Formatting",
+    "created: 2026-11-18",
+    "---",
+    "one two three four five",
+  })
+  check("formatting: word_count excludes frontmatter", formatting.word_count() == 5)
+
+  -- TOC is generated from headings, indented by level, inserted after frontmatter
+  vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
+  formatting.toc()
+  local after = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+  local toc_idx = nil
+  for i, l in ipairs(after) do
+    if l == "## Table of Contents" then
+      toc_idx = i
+      break
+    end
+  end
+  check("formatting: toc header inserted", toc_idx ~= nil)
+  check("formatting: toc entries present",
+    after[toc_idx + 2] == "- [First](#first)"
+      and after[toc_idx + 3] == "  - [Second](#second)")
+  check("formatting: headings preserved after toc",
+    vim.tbl_contains(after, "# First") and vim.tbl_contains(after, "# Third"))
+
+  -- keymaps are registered for the markdown buffer (fallback path)
+  local maps = vim.api.nvim_buf_get_keymap(buf, "n")
+  local found = false
+  for _, m in ipairs(maps) do
+    if m.lhs == "<M-l>" then
+      found = true
+      break
+    end
+  end
+  check("formatting: buffer-local keymap registered", found)
+end
+
 print(string.format("%d passed, %d failed", passed, failed))
 if failed > 0 then
   vim.cmd("cquit")

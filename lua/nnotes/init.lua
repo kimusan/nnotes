@@ -51,6 +51,10 @@ M.setup = function(opts)
     vim.fn.mkdir(_config.global_dir, "p")
   end
 
+  local store = require("nnotes.store")
+  store.init(_config)
+  require("nnotes.formatting").setup(_config)
+
   return M
 end
 
@@ -59,6 +63,10 @@ M.config = function()
     M.setup({})
   end
   return _config
+end
+
+M.word_count = function()
+  return require("nnotes.formatting").word_count()
 end
 
 return M
