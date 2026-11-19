@@ -548,9 +548,9 @@ do
   vim.notify = orig_notify
   check("templates: unknown returns nil", pn == nil and notified)
 
-  -- picker flow: template picker (one item per template) -> title input ->
+  -- picker flow: template select (one entry per template) -> title input ->
   -- note created and opened. (current buffer is an unnamed scratch, so the
-  -- scope resolves to global; no snacks here, so M.open uses vim.ui.select)
+  -- scope resolves to global)
   vim.api.nvim_set_current_buf(vim.api.nvim_create_buf(true, false))
   local sel1, sel1_cb, input_cb = nil, nil, nil
   local orig_select, orig_input = vim.ui.select, vim.ui.input
@@ -561,30 +561,22 @@ do
     input_cb = c
   end
   picker.new_from_template()
-  check("templates: picker lists each template", type(sel1) == "table" and #sel1 == 5)
+  check("templates: select lists each template", type(sel1) == "table" and #sel1 == 5)
   if sel1 and #sel1 == 5 then
-    local scratch
-    for _, it in ipairs(sel1) do
-      if it.name == "scratch" then
-        scratch = it
+    check("templates: scratch in list", vim.tbl_contains(sel1, "scratch"))
+    sel1_cb("scratch")
+    check("templates: title input offered after pick", type(input_cb) == "function")
+    input_cb("Scratchy")
+    vim.ui.select, vim.ui.input = orig_select, orig_input
+    local found = false
+    for _, rec in ipairs(store.index()) do
+      if rec.title == "Scratchy" then
+        found = true
       end
     end
-    check("templates: scratch item present", scratch ~= nil)
-    if scratch then
-      sel1_cb(scratch)
-      check("templates: title input offered after pick", type(input_cb) == "function")
-      input_cb("Scratchy")
-      vim.ui.select, vim.ui.input = orig_select, orig_input
-      local found = false
-      for _, rec in ipairs(store.index()) do
-        if rec.title == "Scratchy" then
-          found = true
-        end
-      end
-      check("templates: note created via picker", found)
-      check("templates: picker opened the note",
-        vim.api.nvim_buf_get_name(0):find("scratchy", 1, true) ~= nil)
-    end
+    check("templates: note created via picker", found)
+    check("templates: picker opened the note",
+      vim.api.nvim_buf_get_name(0):find("scratchy", 1, true) ~= nil)
   end
   vim.ui.select, vim.ui.input = orig_select, orig_input
 

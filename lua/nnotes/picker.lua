@@ -123,26 +123,22 @@ M.new_from_template = function()
     return
   end
   local scope = store.find_project_root(vim.api.nvim_buf_get_name(0)) and "project" or "global"
-  local items = {}
-  for _, name in ipairs(names) do
-    table.insert(items, { text = name, file = "", name = name })
-  end
-  local picker = M.open("New note from template", items, function(it)
-    -- drop the snacks picker before the next prompt, or it keeps stealing focus
-    if picker and picker.close then
-      picker:close()
+  -- Use vim.ui.select (not the snacks picker) for the template choice: the
+  -- flow chains a text input and a file edit, and the picker defers its
+  -- window teardown, so the new note would load into the picker's search
+  -- window. Same proven select -> input chain as M.new.
+  vim.ui.select(names, { prompt = "Template: " }, function(name)
+    if not name then
+      return
     end
-    vim.ui.input({ prompt = "Title: ", default = it.name }, function(title)
-      if not title or title == "" then
-        title = it.name
-      end
+    vim.ui.input({ prompt = "Title: ", default = name }, function(title)
       local notes = require("nnotes.notes")
-      local path = notes.from_template(scope, it.name, title)
+      local path = notes.from_template(scope, name, title ~= "" and title or nil)
       if path then
         open_note(path)
       end
     end)
-  end, { layout = { preview = false } })
+  end)
 end
 
 -- new note: pick a scope, then a title
